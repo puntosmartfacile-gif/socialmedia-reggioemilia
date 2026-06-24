@@ -55,6 +55,19 @@ export interface DashboardBookingItem {
   notes: string;
 }
 
+function getStaticPortfolioData() {
+  return {
+    categories: portfolioCategories,
+    items: portfolioItems.map((item) => ({
+      ...item,
+      id: item.slug,
+      isPublished: true,
+      publishedAt: null,
+    })),
+    source: "static" as const,
+  };
+}
+
 function parseResults(results: unknown) {
   if (!Array.isArray(results)) return [];
   return results
@@ -117,40 +130,43 @@ function mapAdminPortfolioItem(
 }
 
 export const getPortfolioData = cache(async () => {
-  const supabase = await createClient();
-  const [{ data: categories }, { data: items }, { data: images }] = await Promise.all([
-    supabase.from("categories").select("*").order("sort_order"),
-    supabase
-      .from("portfolio_items")
-      .select("*")
-      .eq("is_published", true)
-      .order("sort_order")
-      .order("published_at", { ascending: false }),
-    supabase.from("portfolio_images").select("*").order("sort_order"),
-  ]);
-  const typedCategories = (categories ?? []) as CategoryRow[];
-  const typedItems = (items ?? []) as PortfolioItemRow[];
-  const typedImages = (images ?? []) as PortfolioImageRow[];
+  try {
+    const supabase = await createClient();
+    if (!supabase) {
+      return getStaticPortfolioData();
+    }
+    const [categoriesResult, itemsResult, imagesResult] = await Promise.all([
+      supabase.from("categories").select("*").order("sort_order"),
+      supabase
+        .from("portfolio_items")
+        .select("*")
+        .eq("is_published", true)
+        .order("sort_order")
+        .order("published_at", { ascending: false }),
+      supabase.from("portfolio_images").select("*").order("sort_order"),
+    ]);
 
-  if (typedItems.length === 0) {
+    if (categoriesResult.error || itemsResult.error || imagesResult.error) {
+      return getStaticPortfolioData();
+    }
+
+    const typedCategories = (categoriesResult.data ?? []) as CategoryRow[];
+    const typedItems = (itemsResult.data ?? []) as PortfolioItemRow[];
+    const typedImages = (imagesResult.data ?? []) as PortfolioImageRow[];
+
+    if (typedItems.length === 0) {
+      return getStaticPortfolioData();
+    }
+
+    const mappedCategories = ["Tutti", ...typedCategories.map((category) => category.name)] as string[];
     return {
-      categories: portfolioCategories,
-      items: portfolioItems.map((item) => ({
-        ...item,
-        id: item.slug,
-        isPublished: true,
-        publishedAt: null,
-      })),
-      source: "static" as const,
+      categories: mappedCategories,
+      items: typedItems.map((item) => mapPortfolioItem(item, typedCategories, typedImages)),
+      source: "supabase" as const,
     };
+  } catch {
+    return getStaticPortfolioData();
   }
-
-  const mappedCategories = ["Tutti", ...typedCategories.map((category) => category.name)] as string[];
-  return {
-    categories: mappedCategories,
-    items: typedItems.map((item) => mapPortfolioItem(item, typedCategories, typedImages)),
-    source: "supabase" as const,
-  };
 });
 
 export const getPortfolioItemData = cache(async (slug: string) => {
@@ -189,12 +205,14 @@ export const getPortfolioItemData = cache(async (slug: string) => {
 
 export const getServiceTypes = cache(async () => {
   const supabase = await createClient();
+  if (!supabase) return [];
   const { data } = await supabase.from("service_types").select("*").eq("is_active", true).order("name");
   return (data ?? []) as ServiceTypeRow[];
 });
 
 export const getServiceTypesByType = cache(async (type: ServiceTypeRow["type"]) => {
   const supabase = await createClient();
+  if (!supabase) return [];
   const { data } = await supabase
     .from("service_types")
     .select("*")
@@ -206,6 +224,7 @@ export const getServiceTypesByType = cache(async (type: ServiceTypeRow["type"]) 
 
 export const getAvailabilitySlots = cache(async (serviceSlug?: string) => {
   const supabase = await createClient();
+  if (!supabase) return [];
   let query = supabase
     .from("availability_slots")
     .select("*, service_types(*)")
@@ -231,6 +250,7 @@ export const getAvailabilitySlots = cache(async (serviceSlug?: string) => {
 
 export const getAvailabilitySlotsByServiceType = cache(async (serviceTypeIds: string[]) => {
   const supabase = await createClient();
+  if (!supabase) return [];
   const { data } = await supabase
     .from("availability_slots")
     .select("*, service_types(*)")
@@ -245,6 +265,12 @@ export const getAvailabilitySlotsByServiceType = cache(async (serviceTypeIds: st
 
 export const getAdminPortfolioItems = cache(async () => {
   const supabase = await createClient();
+  if (!supabase) {
+    return {
+      categories: [] as CategoryRow[],
+      items: [] as AdminPortfolioItem[],
+    };
+  }
   const [{ data: categories }, { data: items }, { data: images }] = await Promise.all([
     supabase.from("categories").select("*").order("sort_order"),
     supabase
@@ -265,6 +291,13 @@ export const getAdminPortfolioItems = cache(async () => {
 
 export const getAdminPortfolioItem = cache(async (id: string) => {
   const supabase = await createClient();
+  if (!supabase) {
+    return {
+      item: null,
+      categories: [] as CategoryRow[],
+      images: [] as PortfolioImageRow[],
+    };
+  }
   const [{ data: item }, { data: categories }, { data: images }] = await Promise.all([
     supabase.from("portfolio_items").select("*").eq("id", id).maybeSingle(),
     supabase.from("categories").select("*").order("sort_order"),
@@ -280,6 +313,7 @@ export const getAdminPortfolioItem = cache(async (id: string) => {
 
 export const getAdminBookings = cache(async () => {
   const supabase = await createClient();
+  if (!supabase) return [];
   const { data } = await supabase
     .from("bookings")
     .select("*, service_types(*), profiles(*)")
@@ -300,6 +334,12 @@ export const getAdminBookings = cache(async () => {
 
 export const getAdminAvailabilitySlots = cache(async () => {
   const supabase = await createClient();
+  if (!supabase) {
+    return {
+      slots: [] as (AvailabilitySlotRow & { service_types?: ServiceTypeRow | null })[],
+      serviceTypes: [] as ServiceTypeRow[],
+    };
+  }
   const [slotsResult, servicesResult] = await Promise.all([
     supabase
       .from("availability_slots")
@@ -320,6 +360,7 @@ export const getAdminAvailabilitySlots = cache(async () => {
 
 export const getUserBookings = cache(async (userId: string) => {
   const supabase = await createClient();
+  if (!supabase) return [];
   const { data } = await supabase
     .from("bookings")
     .select("*, service_types(*)")
@@ -346,6 +387,16 @@ export const getUserBookings = cache(async (userId: string) => {
 
 export const getAdminOverviewData = cache(async () => {
   const supabase = await createClient();
+  if (!supabase) {
+    return {
+      recentBookings: [] as BookingRow[],
+      portfolioItemsCount: 0,
+      publishedPortfolioCount: 0,
+      unreadMessagesCount: 0,
+      recentMessages: [] as ContactRequestRow[],
+      upcomingAvailabilityCount: 0,
+    };
+  }
   const [bookings, portfolioItems, contactRequests, availabilitySlots] = await Promise.all([
     supabase.from("bookings").select("*").order("created_at", { ascending: false }).limit(5),
     supabase.from("portfolio_items").select("*"),

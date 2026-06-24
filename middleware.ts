@@ -5,11 +5,22 @@ import type { ProfileRow } from "@/app/types/database";
 
 const authenticatedRoutes = ["/dashboard", "/prenotazioni", "/profilo", "/admin"];
 
+function hasValidSupabaseEnv() {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  return typeof supabaseUrl === "string" && /^https?:\/\//.test(supabaseUrl) && Boolean(supabaseAnonKey);
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const requiresAuth = authenticatedRoutes.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`),
   );
+
+  if (!hasValidSupabaseEnv()) {
+    return NextResponse.next();
+  }
 
   const { supabase, response, user } = await updateSession(request);
 
@@ -24,6 +35,12 @@ export async function middleware(request: NextRequest) {
   }
 
   if (pathname.startsWith("/admin")) {
+    if (!supabase) {
+      const loginUrl = new URL("/login", request.url);
+      loginUrl.searchParams.set("redirect", pathname);
+      return NextResponse.redirect(loginUrl);
+    }
+
     const { data: profile } = await supabase
       .from("profiles")
       .select("role")

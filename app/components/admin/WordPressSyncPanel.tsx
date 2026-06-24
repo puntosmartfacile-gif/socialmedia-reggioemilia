@@ -43,6 +43,13 @@ export default function WordPressSyncPanel({
       const response = await fetch("/api/sync/wordpress", {
         method: "POST",
       });
+
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        const text = await response.text();
+        throw new Error(`Il server ha risposto con un errore (${response.status}). Dettaglio: ${text.substring(0, 150)}`);
+      }
+
       const payload = (await response.json()) as SyncResponse;
 
       if (!response.ok || !payload.success || !payload.result) {

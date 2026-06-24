@@ -10,7 +10,6 @@ export default function LoginClientPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get("redirect") ?? "/dashboard";
-  const supabase = createClient();
   const [magicLinkSent, setMagicLinkSent] = useState(false);
   const [magicEmail, setMagicEmail] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
@@ -20,7 +19,20 @@ export default function LoginClientPage() {
   const [magicError, setMagicError] = useState<string | null>(null);
   const [adminError, setAdminError] = useState<string | null>(null);
 
+  let supabase: ReturnType<typeof createClient> | null = null;
+
+  try {
+    supabase = createClient();
+  } catch {
+    supabase = null;
+  }
+
   const handleMagicLink = async () => {
+    if (!supabase) {
+      setMagicError("Accesso non disponibile: configurazione Supabase mancante.");
+      return;
+    }
+
     setMagicLoading(true);
     setMagicError(null);
     setMagicLinkSent(false);
@@ -44,6 +56,11 @@ export default function LoginClientPage() {
 
   const handleAdminLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!supabase) {
+      setAdminError("Accesso non disponibile: configurazione Supabase mancante.");
+      return;
+    }
+
     setAdminLoading(true);
     setAdminError(null);
 

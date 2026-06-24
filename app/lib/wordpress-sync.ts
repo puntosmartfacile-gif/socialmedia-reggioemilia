@@ -3,9 +3,9 @@ import { createAdminClient } from "@/app/lib/supabase/admin";
 import { createClient } from "@/app/lib/supabase/server";
 import type { CategoryRow, Database, Json, ProfileRow, WpSyncLogRow } from "@/app/types/database";
 
-const WP_API_BASE = "https://socialmediareggioemilia.it/wp-json/wp/v2";
+const WP_API_BASE = process.env.WP_API_BASE || "https://socialmediareggioemilia.it/wp-json/wp/v2";
 
-type SupabaseAdminClient = ReturnType<typeof createAdminClient>;
+type SupabaseAdminClient = NonNullable<ReturnType<typeof createAdminClient>>;
 
 type WordPressRenderedField = {
   rendered: string;
@@ -113,16 +113,34 @@ function getImageFilename(url: string, fallbackSlug: string) {
 async function fetchJson<T>(url: string) {
   const response = await fetch(url, {
     headers: {
+      "User-Agent": "SocialMediaReggioEmilia-Sync/1.0",
       Accept: "application/json",
     },
-    next: { revalidate: 0 },
+    redirect: "follow",
+    cache: "no-store",
   });
 
   if (!response.ok) {
-    throw new Error(`WordPress API error ${response.status} on ${url}`);
+    const body = await response.text();
+    throw new Error(`WP API error ${response.status} on ${url}: ${body.substring(0, 200)}`);
   }
 
-  return response.json() as Promise<T>;
+  const contentType = response.headers.get("content-type") || "";
+  const body = await response.text();
+
+  if (!contentType.includes("application/json")) {
+    throw new Error(
+      `WP API returned non-JSON response on ${url} (content-type: ${contentType}). Body starts with: ${body.substring(0, 200)}`,
+    );
+  }
+
+  try {
+    return JSON.parse(body) as T;
+  } catch (error) {
+    throw new Error(
+      `WP API returned invalid JSON on ${url}: ${error instanceof Error ? error.message : "Unknown parse error"}. Body starts with: ${body.substring(0, 200)}`,
+    );
+  }
 }
 
 async function fetchAllPosts() {
@@ -134,17 +152,39 @@ async function fetchAllPosts() {
     const response = await fetch(
       `${WP_API_BASE}/posts?per_page=100&page=${page}&_embed`,
       {
-        headers: { Accept: "application/json" },
-        next: { revalidate: 0 },
+        headers: {
+          "User-Agent": "SocialMediaReggioEmilia-Sync/1.0",
+          Accept: "application/json",
+        },
+        redirect: "follow",
+        cache: "no-store",
       },
     );
 
     if (!response.ok) {
-      throw new Error(`Errore recupero post WordPress: ${response.status}`);
+      const body = await response.text();
+      throw new Error(`WP API error ${response.status} on posts page ${page}: ${body.substring(0, 200)}`);
     }
 
     totalPages = Number(response.headers.get("x-wp-totalpages") ?? "1");
-    const pagePosts = (await response.json()) as WordPressPost[];
+    const contentType = response.headers.get("content-type") || "";
+    const body = await response.text();
+
+    if (!contentType.includes("application/json")) {
+      throw new Error(
+        `WP API returned non-JSON response on posts page ${page} (content-type: ${contentType}). Body starts with: ${body.substring(0, 200)}`,
+      );
+    }
+
+    let pagePosts: WordPressPost[];
+    try {
+      pagePosts = JSON.parse(body) as WordPressPost[];
+    } catch (error) {
+      throw new Error(
+        `WP API returned invalid JSON on posts page ${page}: ${error instanceof Error ? error.message : "Unknown parse error"}. Body starts with: ${body.substring(0, 200)}`,
+      );
+    }
+
     posts.push(...pagePosts);
     page += 1;
   }
@@ -198,7 +238,7 @@ async function uploadFeaturedImage(
     return existingCoverImageUrl;
   }
 
-  const imageResponse = await fetch(imageUrl, { next: { revalidate: 0 } });
+  const imageResponse = await fetch(imageUrl, { cache: "no-store" });
   if (!imageResponse.ok) {
     throw new Error(`Download immagine fallito (${imageResponse.status})`);
   }
@@ -241,6 +281,18 @@ async function finalizeSyncLog(
   logId: string,
   result: Omit<SyncResult, "startedAt"> & { startedAt?: string },
 ) {
+  const fullErrorMessage =
+    result.errors.length > 0
+      ? result.errors
+          .map((error) => {
+            const prefix = [error.postId ? `postId=${error.postId}` : null, error.slug ? `slug=${error.slug}` : null]
+              .filter(Boolean)
+              .join(", ");
+            return prefix ? `${prefix}: ${error.message}` : error.message;
+          })
+          .join("\n\n")
+      : null;
+
   await admin
     .from("wp_sync_log")
     .update({
@@ -249,6 +301,7 @@ async function finalizeSyncLog(
       posts_updated: result.postsUpdated,
       posts_skipped: result.postsSkipped,
       errors: result.errors as unknown as Json,
+      error_message: fullErrorMessage,
       status: result.status,
     } as never)
     .eq("id", logId);
@@ -260,6 +313,9 @@ export async function authorizeWordPressSync(syncToken?: string): Promise<SyncAu
   }
 
   const supabase = await createClient();
+  if (!supabase) {
+    return { authorized: false, reason: "Configurazione Supabase non disponibile." };
+  }
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -283,6 +339,18 @@ export async function authorizeWordPressSync(syncToken?: string): Promise<SyncAu
 
 export async function runWordPressSync() {
   const admin = createAdminClient();
+  if (!admin) {
+    return {
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      postsSynced: 0,
+      postsUpdated: 0,
+      postsSkipped: 0,
+      errors: [{ message: "Configurazione Supabase non disponibile." }],
+      status: "failed" as const,
+      totalPosts: 0,
+    };
+  }
   const startedAt = new Date().toISOString();
   const logId = await createSyncLog(admin, startedAt);
   const errors: SyncError[] = [];
@@ -411,6 +479,7 @@ export async function runWordPressSync() {
 
 export async function getWordPressSyncHistory(limit = 10) {
   const supabase = await createClient();
+  if (!supabase) return [];
   const { data } = await supabase
     .from("wp_sync_log")
     .select("*")

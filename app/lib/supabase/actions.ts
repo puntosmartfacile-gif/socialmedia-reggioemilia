@@ -50,6 +50,9 @@ async function uploadPortfolioFile(file: File, slug: string, prefix: string) {
   if (!file || file.size === 0) return null;
 
   const admin = createAdminClient();
+  if (!admin) {
+    throw new Error("Configurazione Supabase non disponibile.");
+  }
   const extension = file.name.includes(".") ? file.name.split(".").pop() : "jpg";
   const filePath = `${slug}/${prefix}-${Date.now()}.${extension}`;
   const arrayBuffer = await file.arrayBuffer();
@@ -69,6 +72,9 @@ async function uploadPortfolioFile(file: File, slug: string, prefix: string) {
 
 async function requireAdmin() {
   const supabase = await createClient();
+  if (!supabase) {
+    redirect("/login");
+  }
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -97,6 +103,9 @@ export async function savePortfolioItem(
   try {
     await requireAdmin();
     const admin = createAdminClient();
+    if (!admin) {
+      throw new Error("Configurazione Supabase non disponibile.");
+    }
     const itemId = String(formData.get("itemId") ?? "").trim();
     const title = String(formData.get("title") ?? "").trim();
     const description = String(formData.get("description") ?? "").trim();
@@ -190,6 +199,9 @@ export async function savePortfolioItem(
 export async function deletePortfolioItem(itemId: string) {
   await requireAdmin();
   const admin = createAdminClient();
+  if (!admin) {
+    throw new Error("Configurazione Supabase non disponibile.");
+  }
   await admin.from("portfolio_items").delete().eq("id", itemId);
   revalidatePath("/portfolio");
   revalidatePath("/admin/portfolio");
@@ -198,6 +210,9 @@ export async function deletePortfolioItem(itemId: string) {
 export async function updateBookingStatus(formData: FormData) {
   await requireAdmin();
   const admin = createAdminClient();
+  if (!admin) {
+    throw new Error("Configurazione Supabase non disponibile.");
+  }
   const bookingId = String(formData.get("bookingId") ?? "");
   const status = String(formData.get("status") ?? "") as BookingStatus;
   const adminNotes = String(formData.get("adminNotes") ?? "").trim();
@@ -216,6 +231,9 @@ export async function createAvailabilitySlot(formData: FormData): Promise<void> 
   try {
     await requireAdmin();
     const admin = createAdminClient();
+    if (!admin) {
+      throw new Error("Configurazione Supabase non disponibile.");
+    }
     const payload = {
       date: String(formData.get("date") ?? ""),
       start_time: String(formData.get("startTime") ?? ""),
@@ -242,6 +260,9 @@ export async function createAvailabilitySlot(formData: FormData): Promise<void> 
 export async function deleteAvailabilitySlot(slotId: string) {
   await requireAdmin();
   const admin = createAdminClient();
+  if (!admin) {
+    throw new Error("Configurazione Supabase non disponibile.");
+  }
   await admin.from("availability_slots").delete().eq("id", slotId);
   revalidatePath("/admin/availability");
   revalidatePath("/prenota/fotografia");
@@ -254,6 +275,12 @@ export async function createBooking(
 ): Promise<BookingFormState> {
   try {
     const supabase = await createClient();
+    if (!supabase) {
+      return {
+        success: false,
+        message: "Prenotazioni non disponibili: configurazione Supabase mancante.",
+      };
+    }
     const {
       data: { user },
     } = await supabase.auth.getUser();

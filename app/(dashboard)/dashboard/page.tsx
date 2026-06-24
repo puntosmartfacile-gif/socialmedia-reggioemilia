@@ -7,6 +7,9 @@ import { getUserBookings } from "@/app/lib/supabase/queries";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
+  if (!supabase) {
+    redirect("/login?redirect=/dashboard");
+  }
   const {
     data: { user },
   } = await supabase.auth.getUser();
